@@ -1,0 +1,112 @@
+import pysolr
+import pandas as pd
+import os
+
+solr_url = 'http://localhost:8989/solr'
+collection_name = 'Employee_data_set'
+
+
+solr = pysolr.Solr(f'{solr_url}/{collection_name}', always_commit=True)
+
+def index_data(csv_file_path, exclude_column):
+    if os.path.exists(csv_file_path):
+        try:
+            df = pd.read_csv(csv_file_path, encoding='latin1', on_bad_lines='warn', skip_blank_lines=True)
+
+          
+            if 'Hire Date' in df.columns:
+                df['Hire Date'] = pd.to_datetime(df['Hire Date'], format='%m/%d/%Y', errors='coerce').dt.strftime('%Y-%m-%d')
+            if 'Exit Date' in df.columns:
+                df['Exit Date'] = pd.to_datetime(df['Exit Date'], format='%m/%d/%Y', errors='coerce').dt.strftime('%Y-%m-%d')
+
+     
+            if 'Annual Salary' in df.columns:
+                df['Annual Salary'] = df['Annual Salary'].replace({r'\$': '', r',': ''}, regex=True).astype(float)
+
+          
+            if 'Department' in df.columns:
+                df['Department'] = df['Department'].fillna('Unknown')
+
+          
+            if exclude_column in df.columns:
+                df = df.drop(columns=[exclude_column])
+
+
+            df = df.dropna(subset=['Hire Date', 'Exit Date'])
+
+           
+            if 'Age' in df.columns:
+                df['Age'] = pd.to_numeric(df['Age'], errors='coerce').fillna(0).astype(int)
+
+            required_columns = ['Employee ID', 'Full Name', 'Job Title', 'Gender', 'Ethnicity', 'Age', 'Hire Date', 'Annual Salary', 'Country', 'City', 'Exit Date']
+            for column in required_columns:
+                if column not in df.columns:
+                    print(f"Missing required column: {column}")
+                    return
+
+            solr.add(df.to_dict(orient='records'))
+            print(f"Data indexed into Solr collection '{collection_name}' excluding column '{exclude_column}'")
+        except Exception as e:
+            print(f"Error indexing data: {e}")
+    else:
+        print(f"CSV file not found at '{csv_file_path}'")
+
+
+
+def get_emp_count():
+    try:
+        results = solr.search('*:*')
+        return len(results)
+    except Exception as e:
+        print(f"Error getting employee count from collection '{collection_name}': {e}")
+        return 0
+
+def del_emp_by_id(employee_id):
+    try:
+        solr.delete(id=employee_id)  # Make sure the ID is correct in your schema
+        print(f"Employee with ID '{employee_id}' deleted from collection '{collection_name}'.")
+    except Exception as e:
+        print(f"Error deleting employee with ID '{employee_id}': {e}")
+
+def search_by_column(column_name, column_value):
+    try:
+        query = f"{column_name}:{column_value}"
+        results = solr.search(query)
+        return list(results)
+    except Exception as e:
+        print(f"Error searching in collection '{collection_name}': {e}")
+        return []
+
+def get_dep_facet():
+    try:
+        facet_query = {
+            'facet': 'true',
+            'facet.field': 'Department',
+            'facet.mincount': 1,
+            'q': '*:*'  # Get all documents for faceting
+        }
+        response = solr.search(**facet_query)
+        return response.facets
+    except Exception as e:
+        print(f"Error retrieving department facet from collection '{collection_name}': {e}")
+        return {}
+
+csv_file_path = 'C:\\Users\\nilof\\Downloads\\solr-8.11.4\\solr-8.11.4\\server\\solr\\emp.csv'
+exclude_column = 'Department' 
+
+
+index_data(csv_file_path, exclude_column)
+
+
+search_results = search_by_column('Employee_ID', 'E02002') 
+print(search_results)
+
+
+emp_count = get_emp_count()
+print(f"Total employees: {emp_count}")
+
+
+del_emp_by_id('E02002')
+
+department_facet = get_dep_facet()
+print(department_facet)
